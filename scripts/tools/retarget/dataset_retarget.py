@@ -32,7 +32,7 @@ parser.add_argument(
     "--robot",
     type=str,
     default="g1",
-    help="Robot name to use (default: g1)",
+    help="Robot name to use (supported: g1, x2; default: g1)",
 )
 parser.add_argument(
     "--input_dir",
@@ -75,11 +75,12 @@ import warnings
 import isaaclab.sim as sim_utils
 from isaaclab.scene import InteractiveScene
 
-# load robot cfg as single_retarget does
 if args_cli.robot == "g1":
     from legged_lab.assets.unitree import UNITREE_G1_29DOF_CFG as ROBOT_CFG
+elif args_cli.robot == "x2":
+    from legged_lab.assets.agibot import AGIBOT_X2_ULTRA_CFG as ROBOT_CFG
 else:
-    raise ValueError(f"Robot {args_cli.robot} not supported.")
+    raise ValueError(f"Robot {args_cli.robot} not supported. Supported robots: g1, x2.")
 
 # import functions from gmr_to_lab (must be in same directory)
 script_dir = Path(__file__).parent

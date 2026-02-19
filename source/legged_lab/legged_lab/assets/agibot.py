@@ -18,6 +18,7 @@ class AgibotArticulationCfg(ArticulationCfg):
 
 @configclass
 class AgibotUrdfFileCfg(sim_utils.UrdfFileCfg):
+    force_usd_conversion: bool = True
     activate_contact_sensors: bool = True
     fix_base: bool = False
     merge_fixed_joints: bool = False

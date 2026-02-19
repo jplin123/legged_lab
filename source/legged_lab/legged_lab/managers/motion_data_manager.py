@@ -120,8 +120,29 @@ class MotionDataTerm(ManagerTermBase):
             # root position in world frame, shape (num_frames, 3)
             root_pos_w = torch.from_numpy(motion_raw_data["root_pos"]).to(self.device).float()
             root_pos_w.requires_grad_(False)
-            # root rotation (quaternion) from world frame to body frame, shape (num_frames, 4), in (w, x, y, z) format
+            # root rotation quaternions, shape (num_frames, 4), expected as (w, x, y, z).
             root_quat = torch.from_numpy(motion_raw_data["root_rot"]).to(self.device).float()
+            quat_format = motion_raw_data.get("quat_format", None)
+            if quat_format is not None:
+                quat_format = str(quat_format).lower()
+                if quat_format in ("xyzw", "x,y,z,w"):
+                    root_quat = math_utils.convert_quat(root_quat, "wxyz")
+                elif quat_format not in ("wxyz", "w,x,y,z"):
+                    raise ValueError(
+                        f"[MotionLoader] Unsupported quat_format '{quat_format}' in {motion_file}. "
+                        "Use 'wxyz' or 'xyzw'."
+                    )
+            else:
+                # Backward compatibility heuristic:
+                # many retarget pipelines save quaternions as (x, y, z, w) without metadata.
+                # Detect this case and convert to (w, x, y, z).
+                mean_abs = root_quat.abs().mean(dim=0)
+                if mean_abs[0] < 0.2 and mean_abs[3] > 0.2:
+                    print(
+                        f"[Motion Data Manager] Detected quaternion format likely xyzw in {motion_file}. "
+                        "Converting to wxyz."
+                    )
+                    root_quat = math_utils.convert_quat(root_quat, "wxyz")
             root_quat.requires_grad_(False)
             
             # root velocity in world frame, shape (num_frames, 3)

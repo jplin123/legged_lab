@@ -77,7 +77,7 @@ parser.add_argument(
     "--robot", 
     type=str,
     default="g1",
-    help="The robot name to be used.",
+    help="The robot name to be used (supported: g1, x2).",
 )
 parser.add_argument(
     "--input_file",
@@ -144,8 +144,10 @@ from isaaclab.scene import InteractiveScene
 ##
 if args_cli.robot == "g1":
     from legged_lab.assets.unitree import UNITREE_G1_29DOF_CFG as ROBOT_CFG
+elif args_cli.robot == "x2":
+    from legged_lab.assets.agibot import AGIBOT_X2_ULTRA_CFG as ROBOT_CFG
 else:
-    raise ValueError(f"Robot {args_cli.robot} not supported.")
+    raise ValueError(f"Robot {args_cli.robot} not supported. Supported robots: g1, x2.")
 
 # Import functions and classes from gmr_to_lab.py
 # Add the script directory to path to allow imports

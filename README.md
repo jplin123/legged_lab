@@ -246,6 +246,8 @@ You can play the trained model in a headless mode and record the video:
 # replace the checkpoint path with the path to your trained model
 python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-G1-v0 --headless --num_envs 64 --video --checkpoint logs/rsl_rl/experiment_name/run_name/model_xxx.pt
 # Agibot X2
+export __NV_PRIME_RENDER_OFFLOAD=1
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
 python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-X2-Play-v0 --headless --num_envs 64 --video --checkpoint logs/rsl_rl/experiment_name/run_name/model_xxx.pt
 ```
 

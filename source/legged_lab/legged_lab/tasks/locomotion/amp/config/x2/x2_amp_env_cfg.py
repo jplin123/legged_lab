@@ -22,6 +22,17 @@ class X2AmpEnvCfg(G1AmpEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.robot = AGIBOT_X2_ULTRA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+        # X2-stabilization baseline: start with milder commands/actions than G1.
+        self.actions.joint_pos.scale = 0.2
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.2, 1.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)
+        self.commands.base_velocity.ranges.heading = (-1.57, 1.57)
+        self.events.reset_from_ref.params["height_offset"] = 0.15
+        # Disable pushes for initial stabilization; re-enable later once gait is stable.
+        self.events.push_robot = None
+
         # Reuse the baseline AMP setup and only swap the motion dataset to X2.
         motion_dir = os.path.join(LEGGED_LAB_ROOT_DIR, "data", "MotionData", "x2", "amp", "walk_and_run")
         self.motion_data.motion_dataset.motion_data_dir = motion_dir
