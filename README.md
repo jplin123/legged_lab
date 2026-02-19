@@ -220,6 +220,8 @@ To train the AMP algorithm, you can run the following command:
 
 ```bash
 python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-G1-v0 --headless --max_iterations 50000
+# Agibot X2
+python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-X2-v0 --headless --max_iterations 50000
 ```
 
 If you want to train it in a non-default gpu, you can pass more arguments to the command:
@@ -227,6 +229,8 @@ If you want to train it in a non-default gpu, you can pass more arguments to the
 ```bash
 # replace `x` with the gpu id you want to use
 python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-G1-v0 --headless --max_iterations 50000 --device cuda:x agent.device=cuda:x
+# Agibot X2
+python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-X2-v0 --headless --max_iterations 50000 --device cuda:x agent.device=cuda:x
 ```
 
 For more details about the arguments, run `python scripts/rsl_rl/train.py -h`.
@@ -241,6 +245,8 @@ You can play the trained model in a headless mode and record the video:
 ```bash
 # replace the checkpoint path with the path to your trained model
 python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-G1-v0 --headless --num_envs 64 --video --checkpoint logs/rsl_rl/experiment_name/run_name/model_xxx.pt
+# Agibot X2
+python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-X2-Play-v0 --headless --num_envs 64 --video --checkpoint logs/rsl_rl/experiment_name/run_name/model_xxx.pt
 ```
 
 The video will be saved in the `logs/rsl_rl/experiment_name/run_name/videos/play` directory.

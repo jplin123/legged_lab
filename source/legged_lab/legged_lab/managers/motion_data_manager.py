@@ -61,6 +61,16 @@ class MotionDataTerm(ManagerTermBase):
         self.dof_pos = []
         self.dof_vel = []
         self.key_body_pos_w = []
+        
+        desired_key_body_names = None
+        try:
+            key_body_term = getattr(self._env.cfg.observations.disc, "key_body_pos_b", None)
+            if key_body_term is not None and "asset_cfg" in key_body_term.params:
+                body_names = key_body_term.params["asset_cfg"].body_names
+                if isinstance(body_names, (list, tuple)):
+                    desired_key_body_names = list(body_names)
+        except Exception:
+            desired_key_body_names = None
 
         # only load the motion data files that are in the motion weights dict
         for motion_name, motion_weight in self.motion_weights_dict.items():
@@ -83,7 +93,20 @@ class MotionDataTerm(ManagerTermBase):
             if num_frames < 2:
                 raise ValueError(f"[MotionLoader] Motion has only {num_frames} frames, cannot compute velocity.")
             duration = dt * (num_frames - 1)
-            loop_mode = motion_raw_data["loop_mode"]
+            # Backward compatibility: older motion files may not contain loop_mode.
+            loop_mode_raw = motion_raw_data.get("loop_mode", LoopMode.CLAMP.value)
+            if isinstance(loop_mode_raw, str):
+                loop_mode_key = loop_mode_raw.upper()
+                if loop_mode_key not in LoopMode.__members__:
+                    raise ValueError(
+                        f"[MotionLoader] Invalid loop_mode '{loop_mode_raw}' in {motion_file}. "
+                        f"Expected one of {list(LoopMode.__members__.keys())}, int enum value, or omitted."
+                    )
+                loop_mode = LoopMode[loop_mode_key].value
+            elif isinstance(loop_mode_raw, LoopMode):
+                loop_mode = loop_mode_raw.value
+            else:
+                loop_mode = int(loop_mode_raw)
             
             self.motion_durations.append(duration)
             self.motion_fps.append(fps)
@@ -117,8 +140,35 @@ class MotionDataTerm(ManagerTermBase):
             dof_vel = vel_forward_diff(dof_pos, dt)
             dof_vel.requires_grad_(False)
             
-            # key body position in world frame, shape (num_frames, num_key_bodies, 3)
-            key_body_pos_w = torch.from_numpy(motion_raw_data["key_body_pos"]).to(self.device).float()
+            # key body positions in world frame, shape (num_frames, num_key_bodies, 3)
+            if "key_body_pos" in motion_raw_data:
+                key_body_pos_w = torch.from_numpy(motion_raw_data["key_body_pos"]).to(self.device).float()
+            elif "local_body_pos" in motion_raw_data:
+                local_body_pos = torch.from_numpy(motion_raw_data["local_body_pos"]).to(self.device).float()
+                if desired_key_body_names is not None:
+                    if "link_body_list" not in motion_raw_data:
+                        raise KeyError(
+                            f"Motion file {motion_file} has 'local_body_pos' but no 'link_body_list' to index key bodies."
+                        )
+                    link_body_list = list(motion_raw_data["link_body_list"])
+                    missing = [name for name in desired_key_body_names if name not in link_body_list]
+                    if missing:
+                        raise KeyError(
+                            f"Motion file {motion_file} missing key bodies {missing}. "
+                            f"Available links: {link_body_list}"
+                        )
+                    key_indices = [link_body_list.index(name) for name in desired_key_body_names]
+                    key_body_pos_b = local_body_pos[:, key_indices, :]
+                else:
+                    key_body_pos_b = local_body_pos
+                key_body_pos_w = root_pos_w.unsqueeze(1) + math_utils.quat_apply(
+                    root_quat.unsqueeze(1).expand(-1, key_body_pos_b.shape[1], -1), key_body_pos_b
+                )
+            else:
+                raise KeyError(
+                    f"Motion file {motion_file} must contain either 'key_body_pos' or 'local_body_pos'. "
+                    f"Available keys: {list(motion_raw_data.keys())}"
+                )
             key_body_pos_w.requires_grad_(False)
             
             self.root_pos_w.append(root_pos_w)
