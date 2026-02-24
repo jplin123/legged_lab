@@ -221,7 +221,7 @@ To train the AMP algorithm, you can run the following command:
 ```bash
 python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-G1-v0 --headless --max_iterations 50000
 # Agibot X2
-python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-X2-v0 --headless --max_iterations 50000
+python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-X2-v0 --headless --max_iterations 50000 --resume --load_run "2025-10-22_14-46-38"
 ```
 
 If you want to train it in a non-default gpu, you can pass more arguments to the command:
