@@ -1,7 +1,8 @@
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlSymmetryCfg
 from legged_lab.rsl_rl import RslRlAmpCfg, RslRlPpoAmpAlgorithmCfg
+from legged_lab.tasks.locomotion.amp.mdp.symmetry import x2
 
 
 @configclass
@@ -56,6 +57,10 @@ class X2RslRlOnPolicyRunnerAmpCfg(RslRlOnPolicyRunnerCfg):
             ),
             loss_type="LSGAN",
         ),
-        # Start without any symmetry assumptions for X2.
-        symmetry_cfg=None,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=True,
+            data_augmentation_func=x2.compute_symmetric_states,
+            use_mirror_loss=True,
+            mirror_loss_coeff=0.1,
+        ),
     )

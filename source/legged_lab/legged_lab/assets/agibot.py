@@ -20,6 +20,18 @@ class AgibotArticulationCfg(ArticulationCfg):
 class AgibotUrdfFileCfg(sim_utils.UrdfFileCfg):
     force_usd_conversion: bool = True
     activate_contact_sensors: bool = True
+    rigid_props = sim_utils.RigidBodyPropertiesCfg(
+        disable_gravity=False,
+        retain_accelerations=False,
+        linear_damping=0.0,
+        angular_damping=0.0,
+        max_linear_velocity=1000.0,
+        max_angular_velocity=1000.0,
+        max_depenetration_velocity=1.0,
+    )
+    articulation_props = sim_utils.ArticulationRootPropertiesCfg(
+        enabled_self_collisions=True, solver_position_iteration_count=8, solver_velocity_iteration_count=4
+    )
     fix_base: bool = False
     merge_fixed_joints: bool = False
     make_instanceable: bool = False
