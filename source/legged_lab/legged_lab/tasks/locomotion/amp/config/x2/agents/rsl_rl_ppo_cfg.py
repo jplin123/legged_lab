@@ -61,6 +61,6 @@ class X2RslRlOnPolicyRunnerAmpCfg(RslRlOnPolicyRunnerCfg):
             use_data_augmentation=True,
             data_augmentation_func=x2.compute_symmetric_states,
             use_mirror_loss=True,
-            mirror_loss_coeff=0.1,
+            mirror_loss_coeff=0.001,
         ),
     )

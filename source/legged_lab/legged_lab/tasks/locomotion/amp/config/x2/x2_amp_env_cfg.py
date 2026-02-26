@@ -140,15 +140,46 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
 
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.events.base_external_force_torque.params["asset_cfg"].body_names = ["torso_link"]
-        self.events.reset_from_ref.params = {"animation": ANIMATION_TERM_NAME, "height_offset": 0.15}
-        self.events.push_robot = None
+        self.events.reset_from_ref.params = {"animation": ANIMATION_TERM_NAME, "height_offset": 0.1}
 
-        self.commands.base_velocity.ranges.lin_vel_x = (-0.2, 1.5)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
-        self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)
-        self.commands.base_velocity.ranges.heading = (-1.57, 1.57)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.5, 3.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
 
-        self.actions.joint_pos.scale = 0.2
+        # Per-joint action scaling for X2.
+        # Joints not listed below keep the default scale (0.25).
+        self.actions.joint_pos.scale = {
+            "left_hip_pitch_joint": 0.5,
+            "left_hip_roll_joint": 0.5,
+            "left_hip_yaw_joint": 0.5,
+            "left_knee_joint": 0.5,
+            "left_ankle_pitch_joint": 0.2,
+            "left_ankle_roll_joint": 0.02,
+            "right_hip_pitch_joint": 0.5,
+            "right_hip_roll_joint": 0.5,
+            "right_hip_yaw_joint": 0.5,
+            "right_knee_joint": 0.5,
+            "right_ankle_pitch_joint": 0.2,
+            "right_ankle_roll_joint": 0.02,
+            "waist_yaw_joint": 0.2,
+            "waist_pitch_joint": 0.2,
+            "waist_roll_joint": 0.2,
+            "left_shoulder_pitch_joint": 0.2,
+            "right_shoulder_pitch_joint": 0.2,
+            "left_shoulder_roll_joint": 0.2,
+            "right_shoulder_roll_joint": 0.2,
+            "left_shoulder_yaw_joint": 0.2,
+            "right_shoulder_yaw_joint": 0.2,
+            "left_elbow_joint": 0.2,
+            "right_elbow_joint": 0.2,
+            "left_wrist_roll_joint": 0.2,
+            "right_wrist_roll_joint": 0.2,
+            "left_wrist_pitch_joint": 0.2,
+            "right_wrist_pitch_joint": 0.2,
+            "left_wrist_yaw_joint": 0.2,
+            "right_wrist_yaw_joint": 0.2
+        }
 
         self.curriculum.lin_vel_cmd_levels = None
         self.curriculum.ang_vel_cmd_levels = None
