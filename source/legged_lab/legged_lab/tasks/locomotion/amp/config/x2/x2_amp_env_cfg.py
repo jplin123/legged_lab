@@ -65,7 +65,7 @@ class X2AmpRewards:
     )
     joint_deviation_arms = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.05,
+        weight=-0.01,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -85,7 +85,7 @@ class X2AmpRewards:
 
     feet_air_time = RewTerm(
         func=mdp.feet_air_time_positive_biped,
-        weight=0.5,
+        weight=0.15,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
@@ -150,29 +150,29 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
         # Per-joint action scaling for X2.
         # Joints not listed below keep the default scale (0.25).
         self.actions.joint_pos.scale = {
-            "left_hip_pitch_joint": 0.5,
-            "left_hip_roll_joint": 0.5,
-            "left_hip_yaw_joint": 0.5,
-            "left_knee_joint": 0.5,
+            "left_hip_pitch_joint": 0.35,
+            "left_hip_roll_joint": 0.35,
+            "left_hip_yaw_joint": 0.35,
+            "left_knee_joint": 0.35,
             "left_ankle_pitch_joint": 0.2,
             "left_ankle_roll_joint": 0.02,
-            "right_hip_pitch_joint": 0.5,
-            "right_hip_roll_joint": 0.5,
-            "right_hip_yaw_joint": 0.5,
-            "right_knee_joint": 0.5,
+            "right_hip_pitch_joint": 0.35,
+            "right_hip_roll_joint": 0.35,
+            "right_hip_yaw_joint": 0.35,
+            "right_knee_joint": 0.35,
             "right_ankle_pitch_joint": 0.2,
             "right_ankle_roll_joint": 0.02,
             "waist_yaw_joint": 0.2,
             "waist_pitch_joint": 0.2,
             "waist_roll_joint": 0.2,
-            "left_shoulder_pitch_joint": 0.2,
-            "right_shoulder_pitch_joint": 0.2,
+            "left_shoulder_pitch_joint": 0.35,
+            "right_shoulder_pitch_joint": 0.35,
             "left_shoulder_roll_joint": 0.2,
             "right_shoulder_roll_joint": 0.2,
             "left_shoulder_yaw_joint": 0.2,
             "right_shoulder_yaw_joint": 0.2,
-            "left_elbow_joint": 0.2,
-            "right_elbow_joint": 0.2,
+            "left_elbow_joint": 0.35,
+            "right_elbow_joint": 0.35,
             "left_wrist_roll_joint": 0.2,
             "right_wrist_roll_joint": 0.2,
             "left_wrist_pitch_joint": 0.2,
