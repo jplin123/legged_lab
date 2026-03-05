@@ -55,7 +55,6 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym
 import os
-import re
 import time
 import torch
 import yaml
@@ -71,10 +70,10 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
-from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
+from isaaclab.utils.string import resolve_matching_names
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 
@@ -95,88 +94,147 @@ def _represent_ordereddict(dumper, data):
 yaml.add_representer(OrderedDict, _represent_ordereddict)
 
 
+def _to_builtin(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 1:
+            return value.item()
+        return value.detach().cpu().tolist()
+    if isinstance(value, tuple):
+        return [_to_builtin(v) for v in value]
+    if isinstance(value, list):
+        return [_to_builtin(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _to_builtin(v) for k, v in value.items()}
+    return str(value)
+
+
+def _format_value(value):
+    if isinstance(value, float):
+        return float(f"{value:.3g}")
+    if isinstance(value, list):
+        return [_format_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _format_value(v) for k, v in value.items()}
+    return value
+
+
 def _export_deploy_yaml(env, env_cfg, output_file: str):
-    """Export deploy configuration for the current run."""
-    output_cfg = OrderedDict()
-
-    obs_term_names = env.observation_manager.active_terms["policy"]
-    obs_term_cfg = env.observation_manager._group_obs_term_cfgs["policy"]  # type: ignore[attr-defined]
-    output_cfg["obs_names"] = obs_term_names
-    output_cfg["obs_cfg"] = OrderedDict()
-    for term_name, term_cfg in zip(obs_term_names, obs_term_cfg):
-        output_cfg["obs_cfg"][term_name] = OrderedDict(
-            [
-                ("clip", term_cfg.clip if term_cfg.clip else [0.0]),
-                ("scale", float(term_cfg.scale) if term_cfg.scale else 1.0),
-                ("history_length", term_cfg.history_length),
-            ]
-        )
-
+    """Export deploy configuration aligned with Unitree RL Lab schema."""
     robot: Articulation = env.scene["robot"]
-    action_cfg = env_cfg.actions.joint_pos
-    action_term: JointPositionAction = env.action_manager.get_term("joint_pos")
+    asset_joint_names = list(robot.data.joint_names)
+    joint_sdk_names = getattr(env_cfg.scene.robot, "joint_sdk_names", None)
+    if not joint_sdk_names:
+        joint_sdk_names = list(asset_joint_names)
+        joint_ids_map = list(range(len(joint_sdk_names)))
+    else:
+        joint_ids_map, _ = resolve_matching_names(asset_joint_names, joint_sdk_names, preserve_order=True)
 
-    joint_names = robot.joint_names
-    for i, jnt_name in enumerate(joint_names):
-        if jnt_name != action_term._joint_names[i]:  # type: ignore[attr-defined]
-            raise ValueError(f"Joint name mismatch: {jnt_name} != {action_term._joint_names[i]}")  # type: ignore[attr-defined]
+    stiffness = [0.0] * len(joint_sdk_names)
+    damping = [0.0] * len(joint_sdk_names)
+    default_stiffness = robot.data.default_joint_stiffness[0].detach().cpu().tolist()
+    default_damping = robot.data.default_joint_damping[0].detach().cpu().tolist()
+    for asset_idx, sdk_idx in enumerate(joint_ids_map):
+        stiffness[sdk_idx] = float(default_stiffness[asset_idx])
+        damping[sdk_idx] = float(default_damping[asset_idx])
 
-    output_cfg["joint_names"] = joint_names
-    output_cfg["action_cfg"] = OrderedDict()
-
-    for i, jnt_name in enumerate(joint_names):
-        if action_cfg.clip is not None:
-            clip = action_term._clip[0, i, :].cpu().tolist()  # type: ignore[attr-defined]
-        else:
-            clip = [0.0]
-
-        if isinstance(action_cfg.scale, (float, int)):
-            scale = float(action_cfg.scale)
-        elif isinstance(action_cfg.scale, dict):
-            scale = action_term._scale[0, i].item()  # type: ignore[attr-defined]
-        else:
-            scale = 1.0
-
-        found = False
-        kp = 0.0
-        kd = 0.0
-        for value in env_cfg.scene.robot.actuators.values():
-            for expr in value.joint_names_expr:
-                if re.fullmatch(expr, jnt_name):
-                    found = True
-                    if isinstance(value.stiffness, float):
-                        kp = value.stiffness
-                    elif isinstance(value.stiffness, dict):
-                        for k, v in value.stiffness.items():
-                            if re.fullmatch(k, jnt_name):
-                                kp = v
-                                break
-                    else:
-                        raise ValueError(f"Unsupported stiffness type for joint {jnt_name}: {type(value.stiffness)}")
-
-                    if isinstance(value.damping, float):
-                        kd = value.damping
-                    elif isinstance(value.damping, dict):
-                        for k, v in value.damping.items():
-                            if re.fullmatch(k, jnt_name):
-                                kd = v
-                                break
-                    else:
-                        raise ValueError(f"Unsupported damping type for joint {jnt_name}: {type(value.damping)}")
-                    break
-            if found:
-                break
-        if not found:
-            raise ValueError(f"Joint {jnt_name} not found in robot actuator config.")
-
-        default_pos = robot.data.default_joint_pos[0, i].item()
-        output_cfg["action_cfg"][jnt_name] = OrderedDict(
-            [("clip", clip), ("scale", scale), ("kp", kp), ("kd", kd), ("default_pos", default_pos)]
+    output_cfg = OrderedDict()
+    output_cfg["joint_ids_map"] = [int(x) for x in joint_ids_map]
+    output_cfg["joint_names_asset_order"] = asset_joint_names
+    output_cfg["joint_names_sdk_order"] = list(joint_sdk_names)
+    output_cfg["joint_name_map"] = [
+        OrderedDict(
+            {
+                "asset_idx": int(asset_idx),
+                "asset_name": asset_joint_names[asset_idx],
+                "sdk_idx": int(sdk_idx),
+                "sdk_name": joint_sdk_names[sdk_idx],
+            }
         )
+        for asset_idx, sdk_idx in enumerate(joint_ids_map)
+    ]
+    output_cfg["step_dt"] = float(env.step_dt)
+    output_cfg["stiffness"] = stiffness
+    output_cfg["damping"] = damping
+    output_cfg["default_joint_pos"] = robot.data.default_joint_pos[0].detach().cpu().tolist()
 
+    # Commands
+    commands = {}
+    if hasattr(env_cfg.commands, "base_velocity"):
+        commands["base_velocity"] = {}
+        if hasattr(env_cfg.commands.base_velocity, "limit_ranges"):
+            ranges = env_cfg.commands.base_velocity.limit_ranges.to_dict()
+        else:
+            ranges = env_cfg.commands.base_velocity.ranges.to_dict()
+        for item_name in ["lin_vel_x", "lin_vel_y", "ang_vel_z"]:
+            ranges[item_name] = list(ranges[item_name])
+        commands["base_velocity"]["ranges"] = ranges
+    output_cfg["commands"] = commands
+
+    # Actions
+    actions = {}
+    action_names = env.action_manager.active_terms
+    action_terms = zip(action_names, env.action_manager._terms.values())
+    for _, action_term in action_terms:
+        action_name = action_term.__class__.__name__
+        term_cfg = action_term.cfg.copy()
+        if isinstance(term_cfg.scale, (float, int)):
+            term_cfg.scale = [float(term_cfg.scale) for _ in range(action_term.action_dim)]
+        else:
+            term_cfg.scale = action_term._scale[0].detach().cpu().tolist()
+
+        if term_cfg.clip is not None:
+            term_cfg.clip = action_term._clip[0].detach().cpu().tolist()
+
+        if action_name in ["JointPositionAction", "JointVelocityAction"]:
+            if term_cfg.use_default_offset:
+                term_cfg.offset = action_term._offset[0].detach().cpu().tolist()
+            else:
+                term_cfg.offset = [0.0 for _ in range(action_term.action_dim)]
+
+        term_cfg = term_cfg.to_dict()
+        for key in ["class_type", "asset_name", "debug_vis", "preserve_order", "use_default_offset"]:
+            term_cfg.pop(key, None)
+        if action_term._joint_ids == slice(None):
+            term_cfg["joint_ids"] = None
+        else:
+            term_cfg["joint_ids"] = _to_builtin(action_term._joint_ids)
+        if hasattr(action_term, "_joint_names"):
+            term_cfg["resolved_joint_names"] = list(action_term._joint_names)
+        actions[action_name] = term_cfg
+    output_cfg["actions"] = actions
+
+    # Observations
+    observations = {}
+    obs_names = env.observation_manager.active_terms["policy"]
+    obs_cfgs = env.observation_manager._group_obs_term_cfgs["policy"]  # type: ignore[attr-defined]
+    for obs_name, obs_cfg in zip(obs_names, obs_cfgs):
+        obs_dims = tuple(obs_cfg.func(env, **obs_cfg.params).shape)
+        term_cfg = obs_cfg.copy()
+        if term_cfg.scale is not None:
+            scale = _to_builtin(term_cfg.scale)
+            if isinstance(scale, (float, int)):
+                term_cfg.scale = [float(scale) for _ in range(obs_dims[1])]
+            else:
+                term_cfg.scale = scale
+        else:
+            term_cfg.scale = [1.0 for _ in range(obs_dims[1])]
+        if term_cfg.clip is not None:
+            term_cfg.clip = list(term_cfg.clip)
+        if term_cfg.history_length == 0:
+            term_cfg.history_length = 1
+
+        term_cfg = term_cfg.to_dict()
+        for key in ["func", "modifiers", "noise", "flatten_history_dim"]:
+            term_cfg.pop(key, None)
+        observations[obs_name] = term_cfg
+    output_cfg["observations"] = observations
+
+    output_cfg = _format_value(output_cfg)
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(output_file, "w") as f:
-        yaml.dump(output_cfg, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(output_cfg, f, default_flow_style=None, sort_keys=False, allow_unicode=True)
     print(f"[INFO] Deploy config exported to: {output_file}")
 
 
