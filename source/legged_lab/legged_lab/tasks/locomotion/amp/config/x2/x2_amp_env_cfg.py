@@ -193,8 +193,9 @@ class X2AmpEnvCfg_PLAY(X2AmpEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 48
         self.scene.env_spacing = 2.5
-        self.commands.base_velocity.ranges.lin_vel_x = (0.5, 3.0)
+        # Keep PLAY command ranges consistent with training for faithful evaluation/deploy export.
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.5, 3.0)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
         self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.heading = (0.0, 0.0)
+        self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
         self.events.reset_from_ref = None
