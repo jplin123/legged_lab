@@ -55,11 +55,15 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym
 import os
+import re
 import time
 import torch
+import yaml
+from collections import OrderedDict
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
+from isaaclab.assets import Articulation
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -67,6 +71,7 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
+from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
@@ -81,6 +86,98 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import legged_lab.tasks  # noqa: F401
 
 # PLACEHOLDER: Extension template (do not remove this comment)
+
+
+def _represent_ordereddict(dumper, data):
+    return dumper.represent_mapping("tag:yaml.org,2002:map", data.items())
+
+
+yaml.add_representer(OrderedDict, _represent_ordereddict)
+
+
+def _export_deploy_yaml(env, env_cfg, output_file: str):
+    """Export deploy configuration for the current run."""
+    output_cfg = OrderedDict()
+
+    obs_term_names = env.observation_manager.active_terms["policy"]
+    obs_term_cfg = env.observation_manager._group_obs_term_cfgs["policy"]  # type: ignore[attr-defined]
+    output_cfg["obs_names"] = obs_term_names
+    output_cfg["obs_cfg"] = OrderedDict()
+    for term_name, term_cfg in zip(obs_term_names, obs_term_cfg):
+        output_cfg["obs_cfg"][term_name] = OrderedDict(
+            [
+                ("clip", term_cfg.clip if term_cfg.clip else [0.0]),
+                ("scale", float(term_cfg.scale) if term_cfg.scale else 1.0),
+                ("history_length", term_cfg.history_length),
+            ]
+        )
+
+    robot: Articulation = env.scene["robot"]
+    action_cfg = env_cfg.actions.joint_pos
+    action_term: JointPositionAction = env.action_manager.get_term("joint_pos")
+
+    joint_names = robot.joint_names
+    for i, jnt_name in enumerate(joint_names):
+        if jnt_name != action_term._joint_names[i]:  # type: ignore[attr-defined]
+            raise ValueError(f"Joint name mismatch: {jnt_name} != {action_term._joint_names[i]}")  # type: ignore[attr-defined]
+
+    output_cfg["joint_names"] = joint_names
+    output_cfg["action_cfg"] = OrderedDict()
+
+    for i, jnt_name in enumerate(joint_names):
+        if action_cfg.clip is not None:
+            clip = action_term._clip[0, i, :].cpu().tolist()  # type: ignore[attr-defined]
+        else:
+            clip = [0.0]
+
+        if isinstance(action_cfg.scale, (float, int)):
+            scale = float(action_cfg.scale)
+        elif isinstance(action_cfg.scale, dict):
+            scale = action_term._scale[0, i].item()  # type: ignore[attr-defined]
+        else:
+            scale = 1.0
+
+        found = False
+        kp = 0.0
+        kd = 0.0
+        for value in env_cfg.scene.robot.actuators.values():
+            for expr in value.joint_names_expr:
+                if re.fullmatch(expr, jnt_name):
+                    found = True
+                    if isinstance(value.stiffness, float):
+                        kp = value.stiffness
+                    elif isinstance(value.stiffness, dict):
+                        for k, v in value.stiffness.items():
+                            if re.fullmatch(k, jnt_name):
+                                kp = v
+                                break
+                    else:
+                        raise ValueError(f"Unsupported stiffness type for joint {jnt_name}: {type(value.stiffness)}")
+
+                    if isinstance(value.damping, float):
+                        kd = value.damping
+                    elif isinstance(value.damping, dict):
+                        for k, v in value.damping.items():
+                            if re.fullmatch(k, jnt_name):
+                                kd = v
+                                break
+                    else:
+                        raise ValueError(f"Unsupported damping type for joint {jnt_name}: {type(value.damping)}")
+                    break
+            if found:
+                break
+        if not found:
+            raise ValueError(f"Joint {jnt_name} not found in robot actuator config.")
+
+        default_pos = robot.data.default_joint_pos[0, i].item()
+        output_cfg["action_cfg"][jnt_name] = OrderedDict(
+            [("clip", clip), ("scale", scale), ("kp", kp), ("kd", kd), ("default_pos", default_pos)]
+        )
+
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, "w") as f:
+        yaml.dump(output_cfg, f, default_flow_style=False, allow_unicode=True)
+    print(f"[INFO] Deploy config exported to: {output_file}")
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -124,6 +221,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
+
+    # export deploy config
+    deploy_yaml_path = os.path.join(log_dir, "params", "deploy.yaml")
+    try:
+        _export_deploy_yaml(env.unwrapped, env_cfg, deploy_yaml_path)
+    except Exception as exc:
+        print(f"[WARN] Failed to export deploy config: {exc}")
 
     # wrap for video recording
     if args_cli.video:
