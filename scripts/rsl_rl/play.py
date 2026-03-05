@@ -209,33 +209,71 @@ def _export_deploy_yaml(env, env_cfg, output_file: str):
     observations = {}
     obs_names = env.observation_manager.active_terms["policy"]
     obs_cfgs = env.observation_manager._group_obs_term_cfgs["policy"]  # type: ignore[attr-defined]
+    obs_term_layout = []
+    running_offset = 0
     for obs_name, obs_cfg in zip(obs_names, obs_cfgs):
         obs_dims = tuple(obs_cfg.func(env, **obs_cfg.params).shape)
         term_cfg = obs_cfg.copy()
+        term_dim = int(obs_dims[1])
         if term_cfg.scale is not None:
             scale = _to_builtin(term_cfg.scale)
             if isinstance(scale, (float, int)):
-                term_cfg.scale = [float(scale) for _ in range(obs_dims[1])]
+                term_cfg.scale = [float(scale) for _ in range(term_dim)]
             else:
                 term_cfg.scale = scale
         else:
-            term_cfg.scale = [1.0 for _ in range(obs_dims[1])]
+            term_cfg.scale = [1.0 for _ in range(term_dim)]
         if term_cfg.clip is not None:
             term_cfg.clip = list(term_cfg.clip)
         if term_cfg.history_length == 0:
             term_cfg.history_length = 1
+
+        history_length = int(term_cfg.history_length)
+        flatten_history = bool(term_cfg.flatten_history_dim)
+        slice_start = running_offset
+        slice_end = running_offset + term_dim
+        running_offset = slice_end
+        obs_term_layout.append(
+            OrderedDict(
+                {
+                    "name": obs_name,
+                    "slice": [slice_start, slice_end],
+                    "term_dim": term_dim,
+                    "history_length": history_length,
+                    "flatten_history_dim": flatten_history,
+                    "layout": (
+                        "term-major, history-oldest-to-newest (xxxxx yyyyy style)"
+                        if flatten_history
+                        else "term-major, explicit history dimension"
+                    ),
+                }
+            )
+        )
 
         term_cfg = term_cfg.to_dict()
         for key in ["func", "modifiers", "noise", "flatten_history_dim"]:
             term_cfg.pop(key, None)
         observations[obs_name] = term_cfg
     output_cfg["observations"] = observations
+    output_cfg["observation_layout"] = OrderedDict(
+        {
+            "policy_concatenate_terms": bool(env.observation_manager.group_obs_concatenate["policy"]),
+            "policy_concat_order": "term-major (not interleaved xyxyxy)",
+            "policy_terms": obs_term_layout,
+        }
+    )
 
     output_cfg = _format_value(output_cfg)
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(output_file, "w") as f:
         yaml.dump(output_cfg, f, default_flow_style=None, sort_keys=False, allow_unicode=True)
     print(f"[INFO] Deploy config exported to: {output_file}")
+    print("[INFO] Policy observation flatten order: term-major blocks (xxxxx yyyyy), not interleaved (xyxyxy).")
+    for item in obs_term_layout:
+        print(
+            f"[INFO]   {item['name']}: slice={item['slice']} dim={item['term_dim']} "
+            f"history={item['history_length']} flatten={item['flatten_history_dim']}"
+        )
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
