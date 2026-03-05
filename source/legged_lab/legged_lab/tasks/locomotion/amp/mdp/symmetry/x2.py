@@ -164,6 +164,7 @@ def _transform_policy_obs_left_right(env: ManagerBasedRLEnv, obs: torch.Tensor) 
     KEY_BODY_POS_DIM = key_body_num * 3
 
     end_idx = 0
+    total_dim = obs.shape[1]
     for _ in range(HISTORY_LEN):
         start_idx = end_idx
         end_idx = start_idx + ANG_VEL_DIM
@@ -194,10 +195,17 @@ def _transform_policy_obs_left_right(env: ManagerBasedRLEnv, obs: torch.Tensor) 
         end_idx = start_idx + LAST_ACTIONS_DIM
         obs[:, start_idx:end_idx] = _switch_x2_29dof_joints_left_right(obs[:, start_idx:end_idx])
 
-    for _ in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + KEY_BODY_POS_DIM
-        obs[:, start_idx:end_idx] = _switch_x2_29dof_key_body_pos_left_right(obs[:, start_idx:end_idx])
+    # key_body_pos_b is optional in X2 policy obs (disabled for real-robot-friendly setup).
+    if total_dim - end_idx == HISTORY_LEN * KEY_BODY_POS_DIM:
+        for _ in range(HISTORY_LEN):
+            start_idx = end_idx
+            end_idx = start_idx + KEY_BODY_POS_DIM
+            obs[:, start_idx:end_idx] = _switch_x2_29dof_key_body_pos_left_right(obs[:, start_idx:end_idx])
+    elif total_dim != end_idx:
+        raise ValueError(
+            f"Unexpected X2 policy obs dim: got {total_dim}, parsed {end_idx}. "
+            "Expected either no key-body channels or full key-body history."
+        )
 
     return obs
 

@@ -37,21 +37,23 @@ class X2AmpRewards:
 
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=1.0,
+        weight=1.25,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_exp,
-        weight=1.0,
+        weight=1.25,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
+    alive = RewTerm(func=mdp.is_alive, weight=0.15)
 
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.2)
-    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
-    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-2.0e-6)
-    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-1.0e-7)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.005)
+    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.1)
+    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
+    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    joint_energy = RewTerm(func=mdp.joint_energy, weight=-1.0e-4)
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-1.0,
@@ -100,6 +102,14 @@ class X2AmpRewards:
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
         },
     )
+    undesired_contacts = RewTerm(
+        func=mdp.undesired_contacts,
+        weight=-10.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),
+            "threshold": 1.0,
+        },
+    )
 
     termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
 
@@ -121,22 +131,18 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
 
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
 
-        self.observations.policy.key_body_pos_b.params = {
-            "asset_cfg": SceneEntityCfg(name="robot", body_names=KEY_BODY_NAMES, preserve_order=True)
-        }
-        self.observations.critic.key_body_pos_b.params = {
-            "asset_cfg": SceneEntityCfg(name="robot", body_names=KEY_BODY_NAMES, preserve_order=True)
-        }
-        self.observations.disc.key_body_pos_b.params = {
-            "asset_cfg": SceneEntityCfg(name="robot", body_names=KEY_BODY_NAMES, preserve_order=True)
-        }
+        # Keep AMP observations real-robot friendly:
+        # do not rely on key-body Cartesian positions.
+        self.observations.policy.key_body_pos_b = None
+        self.observations.critic.key_body_pos_b = None
+        self.observations.disc.key_body_pos_b = None
         self.observations.disc.history_length = AMP_NUM_STEPS
 
         self.observations.disc_demo.ref_root_local_rot_tan_norm.params["animation"] = ANIMATION_TERM_NAME
         self.observations.disc_demo.ref_root_ang_vel_b.params["animation"] = ANIMATION_TERM_NAME
         self.observations.disc_demo.ref_joint_pos.params["animation"] = ANIMATION_TERM_NAME
         self.observations.disc_demo.ref_joint_vel.params["animation"] = ANIMATION_TERM_NAME
-        self.observations.disc_demo.ref_key_body_pos_b.params["animation"] = ANIMATION_TERM_NAME
+        self.observations.disc_demo.ref_key_body_pos_b = None
 
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.events.base_external_force_torque.params["asset_cfg"].body_names = ["torso_link"]
