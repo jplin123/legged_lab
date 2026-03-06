@@ -96,10 +96,18 @@ class X2AmpRewards:
     )
     feet_slide = RewTerm(
         func=mdp.feet_slide,
-        weight=-0.1,
+        weight=-0.15,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
+        },
+    )
+    sound_suppression = RewTerm(
+        func=mdp.sound_suppression_acc_per_foot,
+        weight=-5.0e-5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
+            "command_name": "base_velocity",
         },
     )
     undesired_contacts = RewTerm(
@@ -161,13 +169,13 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
             "left_hip_yaw_joint": 0.35,
             "left_knee_joint": 0.35,
             "left_ankle_pitch_joint": 0.2,
-            "left_ankle_roll_joint": 0.02,
+            "left_ankle_roll_joint": 0.05,
             "right_hip_pitch_joint": 0.35,
             "right_hip_roll_joint": 0.35,
             "right_hip_yaw_joint": 0.35,
             "right_knee_joint": 0.35,
             "right_ankle_pitch_joint": 0.2,
-            "right_ankle_roll_joint": 0.02,
+            "right_ankle_roll_joint": 0.05,
             "waist_yaw_joint": 0.2,
             "waist_pitch_joint": 0.2,
             "waist_roll_joint": 0.2,
