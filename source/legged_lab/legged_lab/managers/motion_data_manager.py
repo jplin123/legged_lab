@@ -53,6 +53,7 @@ class MotionDataTerm(ManagerTermBase):
         self.motion_num_frames = []
         self.motion_weights = []
         self.motion_loop_modes = []
+        self.motion_names = []
         
         self.root_pos_w = []
         self.root_quat = []
@@ -114,6 +115,7 @@ class MotionDataTerm(ManagerTermBase):
             self.motion_num_frames.append(num_frames)
             self.motion_loop_modes.append(loop_mode)
             self.motion_weights.append(motion_weight)
+            self.motion_names.append(motion_name)
             
             # Get the motion data
             
@@ -208,6 +210,7 @@ class MotionDataTerm(ManagerTermBase):
         # Get the normalized motion weights
         self.motion_weights = torch.tensor(self.motion_weights, dtype=torch.float32, device=self.device)
         self.motion_weights = self.motion_weights / torch.sum(self.motion_weights)
+        self._prepare_style_groups()
         
         # Some other infomation
         self.num_dofs = self.dof_pos[0].shape[1]
@@ -230,6 +233,23 @@ class MotionDataTerm(ManagerTermBase):
         self.motion_start_indices = torch.cumsum(lengths_shifted, dim=0)
         
         return
+
+    def _prepare_style_groups(self):
+        self.style_motion_ids: dict[str, torch.Tensor] = {}
+        self.style_motion_weights: dict[str, torch.Tensor] = {}
+        if not self.cfg.motion_style_groups:
+            return
+
+        name_to_idx = {name: idx for idx, name in enumerate(self.motion_names)}
+        for style_name, motion_names in self.cfg.motion_style_groups.items():
+            style_ids = [name_to_idx[name] for name in motion_names if name in name_to_idx]
+            if not style_ids:
+                continue
+            ids_tensor = torch.tensor(style_ids, dtype=torch.long, device=self.device)
+            weights = self.motion_weights[ids_tensor]
+            weights = weights / torch.sum(weights)
+            self.style_motion_ids[style_name] = ids_tensor
+            self.style_motion_weights[style_name] = weights
          
     # Some helper functions
     
@@ -273,6 +293,89 @@ class MotionDataTerm(ManagerTermBase):
             torch.Tensor: A tensor of sampled motion IDs, shape (n,).
         """
         motion_ids = torch.multinomial(self.motion_weights, num_samples=n, replacement=True)
+        return motion_ids
+
+    def _sample_from_style(self, style_name: str, num_samples: int) -> torch.Tensor | None:
+        if style_name not in self.style_motion_ids or num_samples <= 0:
+            return None
+        ids = self.style_motion_ids[style_name]
+        weights = self.style_motion_weights[style_name]
+        sample_idx = torch.multinomial(weights, num_samples=num_samples, replacement=True)
+        return ids[sample_idx]
+
+    def sample_motions_by_command(self, command: torch.Tensor) -> torch.Tensor:
+        """Sample motions conditioned on commanded velocity/style groups if configured."""
+        if not self.style_motion_ids:
+            return self.sample_motions(command.shape[0])
+
+        cmd_x = command[:, 0]
+        cmd_y = command[:, 1] if command.shape[1] > 1 else torch.zeros_like(cmd_x)
+        cmd_yaw = command[:, 2] if command.shape[1] > 2 else torch.zeros_like(cmd_x)
+
+        motion_ids = torch.empty(command.shape[0], dtype=torch.long, device=self.device)
+        assigned = torch.zeros(command.shape[0], dtype=torch.bool, device=self.device)
+
+        side_mask = torch.abs(cmd_y) > self.cfg.side_step_threshold
+        if "side_step" in self.style_motion_ids and torch.any(side_mask):
+            sampled = self._sample_from_style("side_step", int(side_mask.sum().item()))
+            motion_ids[side_mask] = sampled
+            assigned[side_mask] = True
+
+        turn_mask = (~assigned) & (torch.abs(cmd_yaw) > self.cfg.turn_threshold)
+        if "turn" in self.style_motion_ids and torch.any(turn_mask):
+            sampled = self._sample_from_style("turn", int(turn_mask.sum().item()))
+            motion_ids[turn_mask] = sampled
+            assigned[turn_mask] = True
+
+        if self.cfg.run_start_speed <= self.cfg.walk_end_speed:
+            raise ValueError("run_start_speed must be greater than walk_end_speed.")
+
+        abs_x = torch.abs(cmd_x)
+        alpha = (abs_x - self.cfg.walk_end_speed) / (self.cfg.run_start_speed - self.cfg.walk_end_speed)
+        alpha = torch.clamp(alpha, 0.0, 1.0)
+        run_mask = torch.rand_like(alpha) < alpha
+        transition_mask = (
+            (~assigned)
+            & self.cfg.transition_band_enabled
+            & (abs_x > self.cfg.walk_end_speed)
+            & (abs_x < self.cfg.run_start_speed)
+        )
+
+        if "transition" in self.style_motion_ids and torch.any(transition_mask):
+            sampled = self._sample_from_style("transition", int(transition_mask.sum().item()))
+            motion_ids[transition_mask] = sampled
+            assigned[transition_mask] = True
+
+        backward_mask = (~assigned) & (cmd_x < -self.cfg.backward_threshold)
+        if torch.any(backward_mask):
+            back_run_mask = backward_mask & run_mask
+            back_walk_mask = backward_mask & (~run_mask)
+            if "run_backward" in self.style_motion_ids and torch.any(back_run_mask):
+                sampled = self._sample_from_style("run_backward", int(back_run_mask.sum().item()))
+                motion_ids[back_run_mask] = sampled
+                assigned[back_run_mask] = True
+            if "walk_backward" in self.style_motion_ids and torch.any(back_walk_mask):
+                sampled = self._sample_from_style("walk_backward", int(back_walk_mask.sum().item()))
+                motion_ids[back_walk_mask] = sampled
+                assigned[back_walk_mask] = True
+
+        forward_mask = ~assigned
+        if torch.any(forward_mask):
+            fwd_run_mask = forward_mask & run_mask
+            fwd_walk_mask = forward_mask & (~run_mask)
+            if "run_forward" in self.style_motion_ids and torch.any(fwd_run_mask):
+                sampled = self._sample_from_style("run_forward", int(fwd_run_mask.sum().item()))
+                motion_ids[fwd_run_mask] = sampled
+                assigned[fwd_run_mask] = True
+            if "walk_forward" in self.style_motion_ids and torch.any(fwd_walk_mask):
+                sampled = self._sample_from_style("walk_forward", int(fwd_walk_mask.sum().item()))
+                motion_ids[fwd_walk_mask] = sampled
+                assigned[fwd_walk_mask] = True
+
+        if not torch.all(assigned):
+            fallback = self.sample_motions(int((~assigned).sum().item()))
+            motion_ids[~assigned] = fallback
+
         return motion_ids
         
     def sample_times(self, motion_ids: torch.Tensor, truncate_time_start: float = None, truncate_time_end: float = None):

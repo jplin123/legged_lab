@@ -22,7 +22,6 @@ KEY_BODY_NAMES = [
 ANIMATION_TERM_NAME = "animation"
 AMP_NUM_STEPS = 4
 
-
 def _build_motion_weights(motion_dir: str) -> dict[str, float]:
     return {
         os.path.splitext(file_name)[0]: 1.0
@@ -47,6 +46,11 @@ class X2AmpRewards:
     )
     alive = RewTerm(func=mdp.is_alive, weight=0.15)
 
+    body_orientation_l2 = RewTerm(
+        func=mdp.body_orientation_l2,
+        weight=-2.0,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+    )
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.2)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.1)
@@ -67,7 +71,7 @@ class X2AmpRewards:
     )
     joint_deviation_arms = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.01,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -84,10 +88,28 @@ class X2AmpRewards:
         weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="waist_.*_joint")},
     )
-
+    stand_still_joint_deviation = RewTerm(
+        func=mdp.stand_still_joint_deviation_l1,
+        weight=-0.2,
+        params={
+            "command_name": "base_velocity",
+            "command_threshold": 0.15,
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[
+                    ".*_hip_.*_joint",
+                    ".*_knee_joint",
+                    ".*_ankle_.*_joint",
+                    "waist_.*_joint",
+                    ".*_shoulder_.*_joint",
+                    ".*_elbow_joint",
+                ],
+            ),
+        },
+    )
     feet_air_time = RewTerm(
         func=mdp.feet_air_time_positive_biped,
-        weight=0.15,
+        weight=0.2,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
@@ -107,7 +129,6 @@ class X2AmpRewards:
         weight=-5.0e-5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
-            "command_name": "base_velocity",
         },
     )
     undesired_contacts = RewTerm(
@@ -136,6 +157,8 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
         motion_dir = os.path.join(LEGGED_LAB_ROOT_DIR, "data", "MotionData", "x2", "amp", "walk_and_run")
         self.motion_data.motion_dataset.motion_data_dir = motion_dir
         self.motion_data.motion_dataset.motion_data_weights = _build_motion_weights(motion_dir)
+        self.motion_data.motion_dataset.motion_style_groups = None
+        self.motion_data.motion_dataset.command_name = None
 
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
 
@@ -151,6 +174,7 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
         self.observations.disc_demo.ref_joint_pos.params["animation"] = ANIMATION_TERM_NAME
         self.observations.disc_demo.ref_joint_vel.params["animation"] = ANIMATION_TERM_NAME
         self.observations.disc_demo.ref_key_body_pos_b = None
+        self.observations.disc_demo.ref_style_command = None
 
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.events.base_external_force_torque.params["asset_cfg"].body_names = ["torso_link"]
@@ -160,6 +184,7 @@ class X2AmpEnvCfg(LocomotionAmpEnvCfg):
         self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
         self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
         self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
+        self.commands.base_velocity.rel_standing_envs = 0.2
 
         # Per-joint action scaling for X2.
         # Joints not listed below keep the default scale (0.25).

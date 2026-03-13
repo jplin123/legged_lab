@@ -10,7 +10,7 @@ class X2RslRlOnPolicyRunnerAmpCfg(RslRlOnPolicyRunnerCfg):
     class_name = "AMPRunner"
     num_steps_per_env = 24
     max_iterations = 50000
-    save_interval = 200
+    save_interval = 100
     experiment_name = "x2_amp"
     obs_groups = {
         "policy": ["policy"],
@@ -52,8 +52,8 @@ class X2RslRlOnPolicyRunnerAmpCfg(RslRlOnPolicyRunnerCfg):
             amp_discriminator=RslRlAmpCfg.AMPDiscriminatorCfg(
                 hidden_dims=[1024, 512],
                 activation="elu",
-                style_reward_scale=5.0,
-                task_style_lerp=0.25,
+                style_reward_scale=2.0,
+                task_style_lerp=0.3,
             ),
             loss_type="LSGAN",
         ),

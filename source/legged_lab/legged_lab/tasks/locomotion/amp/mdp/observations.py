@@ -60,3 +60,31 @@ def ref_root_local_rot_tan_norm(
     else:
         return obs
 
+
+def velocity_style_command(
+    env: ManagerBasedEnv,
+    command_name: str,
+) -> torch.Tensor:
+    """Return the commanded style descriptor [vx, vy, yaw_rate]."""
+    return env.command_manager.get_command(command_name)[:, :3]
+
+
+def ref_velocity_style_command(
+    env: ManagerBasedAnimationEnv,
+    animation: str,
+    flatten_steps_dim: bool = True,
+) -> torch.Tensor:
+    """Infer a demo-side style descriptor [vx_body, vy_body, yaw_rate] from reference motion."""
+    animation_term: AnimationTerm = env.animation_manager.get_term(animation)
+    ref_root_vel_w = animation_term.get_root_vel_w()  # (N, T, 3)
+    ref_root_quat = animation_term.get_root_quat()  # (N, T, 4)
+    ref_root_ang_vel_w = animation_term.get_root_ang_vel_w()  # (N, T, 3)
+
+    ref_root_vel_b = math_utils.quat_apply_inverse(ref_root_quat, ref_root_vel_w)
+    ref_root_ang_vel_b = math_utils.quat_apply_inverse(ref_root_quat, ref_root_ang_vel_w)
+    style_cmd = torch.cat([ref_root_vel_b[:, :, :2], ref_root_ang_vel_b[:, :, 2:3]], dim=-1)
+
+    if flatten_steps_dim:
+        return style_cmd.reshape(env.num_envs, -1)
+    else:
+        return style_cmd

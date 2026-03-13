@@ -77,8 +77,13 @@ class AnimationTerm(ManagerTermBase):
         if env_ids is None:
             return
         
-        # resample motion ids for the reset envs
-        self.motion_ids[env_ids] = self.motion_data_term.sample_motions(len(env_ids))
+        # Resample motion ids. If style groups are configured, tie demo sampling to command speed.
+        command_name = getattr(self.motion_data_term.cfg, "command_name", None)
+        if command_name and hasattr(self._env, "command_manager") and self._env.command_manager is not None:
+            cmd = self._env.command_manager.get_command(command_name)[env_ids]
+            self.motion_ids[env_ids] = self.motion_data_term.sample_motions_by_command(cmd)
+        else:
+            self.motion_ids[env_ids] = self.motion_data_term.sample_motions(len(env_ids))
         self.motion_durations[env_ids] = self.motion_data_term.get_motion_durations(self.motion_ids[env_ids])
         
         truncate_time = self.num_steps * self._env.step_dt
@@ -98,6 +103,11 @@ class AnimationTerm(ManagerTermBase):
 
     def update(self, dt: float):
         if self.cfg.random_fetch:
+            command_name = getattr(self.motion_data_term.cfg, "command_name", None)
+            if command_name and hasattr(self._env, "command_manager") and self._env.command_manager is not None:
+                cmd = self._env.command_manager.get_command(command_name)
+                self.motion_ids[:] = self.motion_data_term.sample_motions_by_command(cmd)
+                self.motion_durations[:] = self.motion_data_term.get_motion_durations(self.motion_ids)
             if self.cfg.num_steps_to_use > 0:
                 self.motion_fetch_time[:, 0] = self.motion_data_term.sample_times(self.motion_ids, truncate_time_end=self.num_steps * dt)
             else: 
@@ -323,8 +333,4 @@ class AnimationManager(ManagerBase):
             # add class to dict
             self._terms[term_name] = term
             self._term_cfgs[term_name] = term_cfg
-
-
-
-
 

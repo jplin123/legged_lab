@@ -43,8 +43,35 @@ import isaaclab.utils.math as math_utils
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-    
-    
+    from legged_lab.envs import ManagerBasedAnimationEnv
+    from legged_lab.managers import AnimationTerm
+
+
+def _command_speed(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
+    cmd = env.command_manager.get_command(command_name)
+    return torch.abs(cmd[:, 0])
+
+
+def _walk_run_blend_weights(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    walk_end_speed: float,
+    run_start_speed: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return smooth walk/run weights from commanded forward speed.
+
+    Below `walk_end_speed`: walk=1, run=0.
+    Above `run_start_speed`: walk=0, run=1.
+    Between them: linear blend.
+    """
+    cmd_speed = _command_speed(env, command_name)
+    if run_start_speed <= walk_end_speed:
+        raise ValueError("run_start_speed must be greater than walk_end_speed.")
+    alpha = (cmd_speed - walk_end_speed) / (run_start_speed - walk_end_speed)
+    alpha = torch.clamp(alpha, 0.0, 1.0)
+    return 1.0 - alpha, alpha
+
+
 def track_lin_vel_xy_exp(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -103,6 +130,23 @@ def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
+
+
+def body_orientation_l2(
+    env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Penalize non-flat orientation of specific bodies using projected gravity in each body frame."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_quat = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    gravity_vec_w = asset.data.GRAVITY_VEC_W
+    if gravity_vec_w.dim() == 1:
+        gravity_dir = gravity_vec_w.view(1, 1, 3).expand(env.num_envs, len(asset_cfg.body_ids), 3)
+    elif gravity_vec_w.dim() == 2:
+        gravity_dir = gravity_vec_w.unsqueeze(1).expand(env.num_envs, len(asset_cfg.body_ids), 3)
+    else:
+        raise ValueError(f"Unexpected GRAVITY_VEC_W shape: {tuple(gravity_vec_w.shape)}")
+    body_projected_gravity = math_utils.quat_apply_inverse(body_quat, gravity_dir)
+    return torch.sum(torch.square(body_projected_gravity[..., :2]), dim=(1, 2))
 
 
 def joint_vel_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -246,6 +290,48 @@ def feet_air_time_positive_biped(
     return reward
 
 
+def feet_air_time_positive_biped_walk(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    threshold: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    walk_end_speed: float = 1.2,
+    run_start_speed: float = 1.8,
+) -> torch.Tensor:
+    """Walk-biased biped air-time reward with smooth fade-out into running."""
+    reward = feet_air_time_positive_biped(
+        env,
+        command_name=command_name,
+        threshold=threshold,
+        sensor_cfg=sensor_cfg,
+        asset_cfg=asset_cfg,
+    )
+    walk_w, _ = _walk_run_blend_weights(env, command_name, walk_end_speed, run_start_speed)
+    return reward * walk_w
+
+
+def feet_air_time_positive_biped_run(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    threshold: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    walk_end_speed: float = 1.2,
+    run_start_speed: float = 1.8,
+) -> torch.Tensor:
+    """Run-biased biped air-time reward with smooth fade-in from walking."""
+    reward = feet_air_time_positive_biped(
+        env,
+        command_name=command_name,
+        threshold=threshold,
+        sensor_cfg=sensor_cfg,
+        asset_cfg=asset_cfg,
+    )
+    _, run_w = _walk_run_blend_weights(env, command_name, walk_end_speed, run_start_speed)
+    return reward * run_w
+
+
 def smoothness_1(env: ManagerBasedRLEnv) -> torch.Tensor:
     # Penalize changes in actions
     diff = torch.square(env.action_manager.action - env.action_manager.prev_action)
@@ -276,6 +362,68 @@ def feet_orientation_l2(env: ManagerBasedRLEnv,
     feet_proj_g_xy_square = torch.sum(torch.square(feet_proj_g[:, :, :2]), dim=-1)  # shape: (N, M)
     
     return torch.sum(feet_proj_g_xy_square * in_contact, dim=-1)  # shape: (N, )
+
+
+def feet_orientation_l2_slow(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str,
+    min_speed: float = 0.05,
+    max_speed: float = 1.2,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize non-flat support foot orientation mainly during walking commands.
+
+    Uses a smooth walk/run blend so the penalty fades out between walk and run speeds.
+    """
+    penalty = feet_orientation_l2(env, sensor_cfg=sensor_cfg, asset_cfg=asset_cfg)
+    walk_w, _ = _walk_run_blend_weights(env, command_name, max_speed, max_speed + 0.6)
+    cmd_speed = _command_speed(env, command_name)
+    gate = ((cmd_speed > min_speed).float()) * walk_w
+    return penalty * gate
+
+
+def joint_deviation_l1_walk(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    walk_end_speed: float = 1.2,
+    run_start_speed: float = 1.8,
+) -> torch.Tensor:
+    """Penalize joint deviation more strongly in walk mode, fading out into run mode."""
+    penalty = joint_deviation_l1(env, asset_cfg=asset_cfg)
+    walk_w, _ = _walk_run_blend_weights(env, command_name, walk_end_speed, run_start_speed)
+    return penalty * walk_w
+
+
+def ref_joint_subset_style_run(
+    env: ManagerBasedAnimationEnv,
+    animation: str,
+    command_name: str,
+    pos_std: float,
+    vel_std: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    walk_end_speed: float = 1.2,
+    run_start_speed: float = 1.8,
+) -> torch.Tensor:
+    """Reward matching a reference joint subset style during running.
+
+    This is intended for arm phase/style retention when AMP alone drifts at higher speeds.
+    """
+    robot: Articulation = env.scene[asset_cfg.name]
+    animation_term: AnimationTerm = env.animation_manager.get_term(animation)
+
+    joint_ids = asset_cfg.joint_ids
+    dof_pos = robot.data.joint_pos[:, joint_ids]
+    dof_vel = robot.data.joint_vel[:, joint_ids]
+    ref_dof_pos = animation_term.get_dof_pos()[:, 0, joint_ids]
+    ref_dof_vel = animation_term.get_dof_vel()[:, 0, joint_ids]
+
+    pos_err = torch.sum(torch.square(dof_pos - ref_dof_pos), dim=-1)
+    vel_err = torch.sum(torch.square(dof_vel - ref_dof_vel), dim=-1)
+    reward = torch.exp(-pos_err / pos_std**2) * torch.exp(-vel_err / vel_std**2)
+    _, run_w = _walk_run_blend_weights(env, command_name, walk_end_speed, run_start_speed)
+    return reward * run_w
     
 def stand_still_joint_deviation_l1(
     env: ManagerBasedRLEnv, command_name: str, command_threshold: float = 0.06, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
