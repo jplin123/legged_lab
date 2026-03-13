@@ -52,8 +52,8 @@ class X2RslRlOnPolicyRunnerAmpCfg(RslRlOnPolicyRunnerCfg):
             amp_discriminator=RslRlAmpCfg.AMPDiscriminatorCfg(
                 hidden_dims=[1024, 512],
                 activation="elu",
-                style_reward_scale=2.0,
-                task_style_lerp=0.3,
+                style_reward_scale=3.0,
+                task_style_lerp=0.35,
             ),
             loss_type="LSGAN",
         ),
